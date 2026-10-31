@@ -1,0 +1,65 @@
+$kind: http-request
+description: ""
+url: http://127.0.0.1:8000/api/locations/?q=Dal
+method: GET
+queryParams:
+  q: Dal
+scripts:
+  - type: afterResponse
+    code: "pm.test(\"Status code is 200\", function () {\r
+
+      \    pm.response.to.have.status(200);\r
+
+      });\r
+
+      \r
+
+      pm.test(\"Results array is returned\", function () {\r
+
+      \    const json = pm.response.json();\r
+
+      \r
+
+      \    pm.expect(json).to.have.property(\"results\");\r
+
+      \    pm.expect(json.results).to.be.an(\"array\");\r
+
+      });\r
+
+      \r
+
+      pm.test(\"At least one suggestion is returned\", function () {\r
+
+      \    const json = pm.response.json();\r
+
+      \r
+
+      \    pm.expect(json.results.length).to.be.above(0);\r
+
+      });\r
+
+      \r
+
+      pm.test(\"Dallas appears in the suggestions\", function () {\r
+
+      \    const json = pm.response.json();\r
+
+      \r
+
+      \    const labels = json.results.map(item => item.label);\r
+
+      \r
+
+      \    pm.expect(\r
+
+      \        labels.some(label => label.includes(\"Dallas\"))\r
+
+      \    ).to.eql(true);\r
+
+      });"
+    language: text/javascript
+  - type: beforeRequest
+    code: ""
+    language: text/javascript
+examples: .resources/04 - City Autocomplete.resources/examples
+order: 4000

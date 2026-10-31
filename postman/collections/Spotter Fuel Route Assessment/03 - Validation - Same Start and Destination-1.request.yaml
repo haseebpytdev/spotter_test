@@ -1,0 +1,39 @@
+$kind: http-request
+name: 03 - Validation - Same Start and Destination
+description: ""
+url: http://127.0.0.1:8000/api/route/
+method: POST
+body:
+  type: json
+  content: "{\r
+
+    \  \"start\": \"Dallas, TX\",\r
+
+    \  \"destination\": \"Dallas, TX\"\r
+
+    }"
+scripts:
+  - type: afterResponse
+    code: "pm.test(\"Status code is 400\", function () {\r
+
+      \    pm.response.to.have.status(400);\r
+
+      });\r
+
+      \r
+
+      pm.test(\"Error message is returned\", function () {\r
+
+      \    const json = pm.response.json();\r
+
+      \r
+
+      \    pm.expect(json).to.have.property(\"error\");\r
+
+      });"
+    language: text/javascript
+  - type: beforeRequest
+    code: ""
+    language: text/javascript
+examples: .resources/03 - Validation - Same Start and Destination-1.resources/examples
+order: 3348

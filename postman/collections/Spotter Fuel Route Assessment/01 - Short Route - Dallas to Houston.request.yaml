@@ -1,0 +1,100 @@
+$kind: http-request
+description: ""
+url: http://127.0.0.1:8000/api/route/
+method: POST
+body:
+  type: json
+  content: "{\r
+
+    \  \"start\": \"Dallas, TX\",\r
+
+    \  \"destination\": \"Houston, TX\"\r
+
+    }"
+scripts:
+  - type: afterResponse
+    code: "pm.test(\"Status code is 200\", function () {\r
+
+      \    pm.response.to.have.status(200);\r
+
+      });\r
+
+      \r
+
+      pm.test(\"Route data is returned\", function () {\r
+
+      \    const json = pm.response.json();\r
+
+      \r
+
+      \    pm.expect(json).to.have.property(\"distance_miles\");\r
+
+      \    pm.expect(json).to.have.property(\"fuel_gallons\");\r
+
+      \    pm.expect(json).to.have.property(\"total_fuel_cost_usd\");\r
+
+      \    pm.expect(json).to.have.property(\"fuel_stops\");\r
+
+      \    pm.expect(json).to.have.property(\"route_geometry\");\r
+
+      });\r
+
+      \r
+
+      pm.test(\"Short route is below 500 miles\", function () {\r
+
+      \    const json = pm.response.json();\r
+
+      \r
+
+      \    pm.expect(json.distance_miles).to.be.below(500);\r
+
+      });\r
+
+      \r
+
+      pm.test(\"No intermediate fuel stop is required\", function () {\r
+
+      \    const json = pm.response.json();\r
+
+      \r
+
+      \    pm.expect(json.fuel_stops).to.be.an(\"array\");\r
+
+      \    pm.expect(json.fuel_stops.length).to.eql(0);\r
+
+      });\r
+
+      \r
+
+      pm.test(\"Fuel calculation follows 10 MPG\", function () {\r
+
+      \    const json = pm.response.json();\r
+
+      \r
+
+      \    const expectedGallons = json.distance_miles / 10;\r
+
+      \r
+
+      \    pm.expect(json.fuel_gallons).to.be.closeTo(expectedGallons, 0.02);\r
+
+      });\r
+
+      \r
+
+      pm.test(\"Total fuel cost is positive\", function () {\r
+
+      \    const json = pm.response.json();\r
+
+      \r
+
+      \    pm.expect(json.total_fuel_cost_usd).to.be.above(0);\r
+
+      });"
+    language: text/javascript
+  - type: beforeRequest
+    code: ""
+    language: text/javascript
+examples: .resources/01 - Short Route - Dallas to Houston.resources/examples
+order: 1000
