@@ -93,24 +93,6 @@ curl -X POST http://127.0.0.1:8000/api/route/ \
 
 **Another test:** Dallas, TX to Chicago, IL is long enough to potentially require fuel stops. Due to the source CSV lacking coordinates, the route can sometimes respond with `422` if the shortlist cannot verify a reachable chain. Try a larger `MAX_STATION_CITIES` or `STATION_MAX_DETOUR_MILES`, and explain the approximation if presenting it.
 
-## How it works (the five-minute explanation)
-
-1. `views.py` validates `start` and `destination` and calls `geo.geocode()` for both.
-2. `geo.driving_route()` makes **one routing request** to Geoapify and receives a GeoJSON road shape, road mileage, and states crossed.
-3. `fuel.read_prices()` reads **only** the CSV, drops non-US rows, and takes the lowest station price per city.
-4. If the trip is longer than 500 miles, `fuel.nearby_stations()` geocodes a small shortlist of cities in route states, cached to disk, and keeps those near the road line.
-5. `fuel.plan_fuel_stops()` chooses reachable low-cost hops and calculates purchased gallons and the total bill. The view returns JSON and the home page draws the result.
-
-## Fuel model and limitations (explain these honestly)
-
-- Range = 500 miles; efficiency = 10 MPG; implied maximum tank capacity = **50 gallons**.
-- The model assumes the vehicle **starts with an empty tank** and purchases the required fuel at an estimated departure price. This makes all consumed fuel count toward the cost. The starting price uses the cheapest priced station in the departure city when available; otherwise, it uses an explicit average or fallback.
-- It buys **just enough for each chosen next hop**, never more than 50 gallons per hop. Its small dynamic-programming comparison finds the cheapest chain **under that purchase policy**. It is **not** a proof of the global cheapest schedule with partial top-ups, tank carryover, or independently routed detours.
-- The CSV contains address strings, cities and states, **but no latitude/longitude**. Geocoding uses *city centers* rather than exact truck-stop coordinates. `distance_from_route_miles` is straight-line distance; it is *not* actual vehicle driving detour mileage.
-- Before geocoding, the shortlist selects a limited number of inexpensive, geographically diverse cities from each route state. This keeps calls bounded but can miss valid stations; a `422` is an honest result when there is no confirmed feasible chain in that shortlist.
-- **External calls:** 1 Geoapify **routing** call for each new route, **2 geocoding** calls for new start/end locations, and for journeys exceeding 500 miles **up to `MAX_STATION_CITIES` additional city geocoding calls**. Cached locations/routes are re-used. This does **not** mean only one external API request overall.
-- Maps use free OpenStreetMap tile imagery through Leaflet, requiring internet in the browser; there is no map image file in the project.
-
 ## Configuration and changes
 
 | File / setting | What to change |
@@ -126,17 +108,6 @@ curl -X POST http://127.0.0.1:8000/api/route/ \
 | `routing/templates/routing/home.html` | Change the demo form/map appearance. |
 
 Run `python manage.py test` after changes. Delete `.cache/` only if you specifically want to clear cached geocoding/routing results.
-
-## How to demo in Loom (max 5 min)
-
-- 0:00-0:35: explain one endpoint, one original CSV, one Geoapify provider.
-- 0:35-1:20: show `views.py` - input, route, fuel planner, JSON output.
-- 1:20-2:05: show `fuel.py` - CSV price lookup and 500-mile range.
-- 2:05-3:30: send a sample Postman request; explain distance, stops and total bill.
-- 3:30-4:15: open the Leaflet map and show its route/station markers.
-- 4:15-4:45: mention caching and source-data limitations.
-
-**Important:** This ZIP contains the code and documentation, **not** a Geoapify key, hosted demo, GitHub URL, or Loom recording. Configure and run it yourself before submitting.
 
 ## References
 
