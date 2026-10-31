@@ -1,0 +1,508 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+  <title>Spotter | Fuel Route Demo</title>
+
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+  >
+
+  <style>
+    body {
+      font: 15px/1.5 system-ui, sans-serif;
+      margin: 0;
+      background: #f6f8fb;
+      color: #1a2533;
+    }
+
+    main {
+      max-width: 970px;
+      margin: 38px auto;
+      padding: 0 20px;
+    }
+
+    h1 {
+      margin-bottom: 3px;
+    }
+
+    p {
+      color: #536073;
+    }
+
+    form {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin: 24px 0;
+    }
+
+    input,
+    button {
+      padding: 11px 14px;
+      font-size: 15px;
+      border-radius: 7px;
+      border: 1px solid #cdd6e0;
+    }
+
+    input {
+      flex: 1;
+      min-width: 170px;
+    }
+
+    button {
+      background: #1167b1;
+      border-color: #1167b1;
+      color: white;
+      cursor: pointer;
+    }
+
+    button:disabled {
+      opacity: 0.6;
+      cursor: progress;
+    }
+
+    #map {
+      height: 430px;
+      border-radius: 12px;
+      margin-top: 18px;
+    }
+
+    #results {
+      white-space: pre-wrap;
+      background: #fff;
+      padding: 17px;
+      border-radius: 9px;
+      overflow-x: auto;
+    }
+
+    small {
+      color: #5c6673;
+    }
+
+    .autocomplete-wrap {
+      position: relative;
+      flex: 1;
+      min-width: 170px;
+    }
+
+    .autocomplete-wrap input {
+      width: 100%;
+      box-sizing: border-box;
+    }
+
+    .suggestions {
+      position: absolute;
+      top: calc(100% + 4px);
+      left: 0;
+      right: 0;
+      z-index: 2000;
+
+      max-height: 250px;
+      overflow-y: auto;
+
+      background: #fff;
+      border: 1px solid #cdd6e0;
+      border-radius: 7px;
+
+      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.12);
+    }
+
+    .suggestion-item {
+      padding: 10px 12px;
+      cursor: pointer;
+      color: #1a2533;
+      border-bottom: 1px solid #edf1f5;
+    }
+
+    .suggestion-item:last-child {
+      border-bottom: none;
+    }
+
+    .suggestion-item:hover {
+      background: #eef5fb;
+    }
+
+    @media (max-width: 680px) {
+      form {
+        display: block;
+      }
+
+      .autocomplete-wrap {
+        margin-bottom: 10px;
+      }
+
+      button {
+        width: 100%;
+      }
+
+      #map {
+        height: 360px;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <main>
+    <h1>US Fuel Route Planner</h1>
+
+    <p>
+      Spotter assessment - one Django API, one fuel-price CSV,
+      one free mapping provider.
+    </p>
+
+    <form id="route-form">
+      <div class="autocomplete-wrap">
+        <input
+          id="start"
+          name="start"
+          aria-label="Start"
+          value="Dallas, TX"
+          placeholder="Start city, state"
+          autocomplete="off"
+          required
+        >
+
+        <div
+          id="start-suggestions"
+          class="suggestions"
+          hidden
+        ></div>
+      </div>
+
+      <div class="autocomplete-wrap">
+        <input
+          id="destination"
+          name="destination"
+          aria-label="Destination"
+          value="Houston, TX"
+          placeholder="Destination city, state"
+          autocomplete="off"
+          required
+        >
+
+        <div
+          id="destination-suggestions"
+          class="suggestions"
+          hidden
+        ></div>
+      </div>
+
+      <button id="submit" type="submit">
+        Calculate route
+      </button>
+    </form>
+
+    <small>
+      Start typing at least three characters to search US cities.
+      First lookups can take longer; later results are cached.
+      Routes and station positions are estimates.
+    </small>
+
+    <div id="map"></div>
+
+    <h2>Result</h2>
+
+    <pre id="results">Enter two US locations to begin.</pre>
+  </main>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <script>
+    const map = L.map('map').setView([39.5, -98.3], 4);
+
+    const geoapifyKey = "{{ geoapify_api_key|escapejs }}";
+
+    L.tileLayer(
+      'https://maps.geoapify.com/v1/tile/osm-carto/{z}/{x}/{y}.png?apiKey='
+        + encodeURIComponent(geoapifyKey),
+      {
+        attribution:
+          'Powered by Geoapify | &copy; OpenStreetMap contributors',
+        maxZoom: 20
+      }
+    ).addTo(map);
+
+
+    const drawing = L.featureGroup().addTo(map);
+
+    const form = document.getElementById('route-form');
+    const output = document.getElementById('results');
+    const submit = document.getElementById('submit');
+
+    /*
+     * Keep a small browser-side cache as well.
+     * Django also caches the provider response on the server.
+     */
+    const citySuggestionCache = new Map();
+
+
+    function hideSuggestions(element) {
+      element.innerHTML = '';
+      element.hidden = true;
+    }
+
+
+    async function getCitySuggestions(query) {
+      const cacheKey = query.trim().toLowerCase();
+
+      if (citySuggestionCache.has(cacheKey)) {
+        return citySuggestionCache.get(cacheKey);
+      }
+
+      const response = await fetch(
+        `/api/locations/?q=${encodeURIComponent(query)}`
+      );
+
+      if (!response.ok) {
+        throw new Error('Location search is temporarily unavailable.');
+      }
+
+      const data = await response.json();
+      const results = data.results || [];
+
+      citySuggestionCache.set(cacheKey, results);
+
+      return results;
+    }
+
+
+    function setupAutocomplete(inputId, suggestionsId) {
+      const input = document.getElementById(inputId);
+      const suggestions = document.getElementById(suggestionsId);
+
+      let timer = null;
+
+      /*
+       * Increment this whenever the text changes.
+       * Older HTTP responses are ignored if the user has already typed
+       * something newer.
+       */
+      let requestVersion = 0;
+
+
+      function showResults(results, version, originalQuery) {
+        if (version !== requestVersion) {
+          return;
+        }
+
+        if (input.value.trim() !== originalQuery) {
+          return;
+        }
+
+        suggestions.innerHTML = '';
+
+        if (!results.length) {
+          suggestions.hidden = true;
+          return;
+        }
+
+        results.forEach(function (place) {
+          const item = document.createElement('div');
+
+          item.className = 'suggestion-item';
+          item.textContent = place.label;
+
+          item.addEventListener('mousedown', function (event) {
+            /*
+             * mousedown is used rather than click because the input would
+             * otherwise lose focus before the selection is processed.
+             */
+            event.preventDefault();
+
+            input.value = place.label;
+
+            hideSuggestions(suggestions);
+          });
+
+          suggestions.appendChild(item);
+        });
+
+        suggestions.hidden = false;
+      }
+
+
+      input.addEventListener('input', function () {
+        clearTimeout(timer);
+
+        const query = input.value.trim();
+        const version = ++requestVersion;
+
+        /*
+         * Two-letter searches produce huge result sets and unnecessary
+         * provider traffic. Three characters are much more useful.
+         */
+        if (query.length < 3) {
+          hideSuggestions(suggestions);
+          return;
+        }
+
+        /*
+         * Debounce:
+         * wait until the user has stopped typing for half a second.
+         */
+        timer = setTimeout(async function () {
+          try {
+            const results = await getCitySuggestions(query);
+
+            showResults(results, version, query);
+
+          } catch (error) {
+            /*
+             * Autocomplete is optional convenience.
+             * A temporary provider failure should not break the form.
+             */
+            if (version === requestVersion) {
+              hideSuggestions(suggestions);
+            }
+          }
+        }, 500);
+      });
+
+
+      input.addEventListener('keydown', function (event) {
+        if (event.key === 'Escape') {
+          hideSuggestions(suggestions);
+        }
+      });
+
+
+      input.addEventListener('blur', function () {
+        /*
+         * Small delay lets a mousedown on a suggestion finish first.
+         */
+        setTimeout(function () {
+          hideSuggestions(suggestions);
+        }, 150);
+      });
+    }
+
+
+    setupAutocomplete(
+      'start',
+      'start-suggestions'
+    );
+
+    setupAutocomplete(
+      'destination',
+      'destination-suggestions'
+    );
+
+
+    form.addEventListener('submit', async function (event) {
+      event.preventDefault();
+
+      hideSuggestions(
+        document.getElementById('start-suggestions')
+      );
+
+      hideSuggestions(
+        document.getElementById('destination-suggestions')
+      );
+
+      submit.disabled = true;
+
+      output.textContent = 'Working on your route...';
+
+      try {
+        const data = Object.fromEntries(
+          new FormData(form)
+        );
+
+        const response = await fetch('/api/route/', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(data)
+        });
+
+        const answer = await response.json();
+
+        if (!response.ok) {
+          throw new Error(
+            answer.error || 'Route could not be calculated.'
+          );
+        }
+
+        drawing.clearLayers();
+
+        L.geoJSON(
+          answer.route_geometry,
+          {
+            style: {
+              color: '#1167b1',
+              weight: 5
+            }
+          }
+        ).addTo(drawing);
+
+
+        answer.fuel_stops.forEach(function (station, index) {
+          const popup = document.createElement('div');
+
+          popup.textContent =
+            `Fuel stop ${index + 1}: `
+            + `${station.name} - `
+            + `${station.city}, ${station.state} - `
+            + `$${station.price_per_gallon}/gal`;
+
+          L.marker([
+            station.latitude,
+            station.longitude
+          ])
+            .addTo(drawing)
+            .bindPopup(popup);
+        });
+
+
+        const bounds = drawing.getBounds();
+
+        if (bounds.isValid()) {
+          map.fitBounds(
+            bounds.pad(0.1)
+          );
+        }
+
+
+        output.textContent = [
+          `Distance: ${answer.distance_miles} miles`,
+          `Fuel required: ${answer.fuel_gallons} gallons`,
+          `Estimated fuel cost: $${answer.total_fuel_cost_usd}`,
+          `Fuel bought at departure: ${answer.start_fuel_gallons} gallons ($${answer.start_fuel_cost_usd})`,
+          `Suggested refuelling stops: ${answer.fuel_stops.length}`,
+
+          '',
+
+          ...answer.fuel_stops.map(
+            function (station, index) {
+              return (
+                `${index + 1}. `
+                + `${station.name} - `
+                + `${station.city}, ${station.state} `
+                + `(mile ${station.mile_marker}, `
+                + `$${station.price_per_gallon}/gal)`
+              );
+            }
+          ),
+
+          '',
+          'Notes:',
+          ...answer.notes
+
+        ].join('\n');
+
+      } catch (error) {
+        output.textContent = error.message;
+
+      } finally {
+        submit.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>
